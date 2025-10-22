@@ -21,7 +21,7 @@ const DEFAULT_CANDIDATES: Candidate[] = [
   { id: 5, name: "Mister Tyga", votes: 0, color: "bg-purple-500", image: "/Mister.jpeg", party: "Web-Chroniquer" },
   { id: 6, name: "Lina Kadjo", votes: 0, color: "bg-pink-500", image: "/lina.jpeg", party: "" },
   { id: 7, name: "Sergio Ramos 1X", votes: 0, color: "bg-yellow-500", image: "/Sergio Ramos.jpeg", party: "1⚔️ KAMIKAZE" },
-  { id: 8, name: "Carine N'guessan", votes: 0, color: "bg-indigo-500", image: "/Carine N'guessan.jpeg", party: "L'Amazone du Chetté" },
+  { id: 8, name: "Carine N'guessan", votes: 0, color: "bg-indigo-500", image: "/Carine.jpeg", party: "L'Amazone du Chetté" },
   { id: 9, name: "Danielle Gnamba", votes: 0, color: "bg-teal-500", image: "/Danielle gnamba.jpeg", party: "Personne d'impact" },
   { id: 10, name: "Lil 1X gnanmien Okocha", votes: 0, color: "bg-orange-500", image: "/okocha.jpeg", party: "Parti Énergique" },
   { id: 11, name: "Tapily Mohamed", votes: 0, color: "bg-cyan-500", image: "/tapy mohamed.jpeg", party: "La hawla wala quwata illa billa" },
