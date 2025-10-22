@@ -141,22 +141,36 @@ export default function VotingApp() {
 
   const voteForCandidate = useCallback(async (candidateId: number) => {
     if (!canVote) return;
-
+  
     const now = Date.now();
     
     // Vérifier le délai côté client aussi
     if (lastVoteTimeRef.current > 0 && now - lastVoteTimeRef.current < 60000) {
       return;
     }
-
+  
     try {
-      // Incrémenter le vote dans la base de données
-      const { error } = await supabase.rpc('increment_vote', {
+      // Essayer d'abord avec la fonction RPC
+      const { error: rpcError } = await supabase.rpc('increment_vote', {
         candidate_id: candidateId
       });
-
-      if (error) throw error;
-
+  
+      if (rpcError) {
+        // Si la fonction RPC échoue, utiliser la méthode directe
+        const currentCandidate = candidates.find(c => c.id === candidateId);
+        if (!currentCandidate) return;
+  
+        const { error: updateError } = await supabase
+          .from('votes')
+          .update({ 
+            votes: currentCandidate.votes + 1,
+            updated_at: new Date().toISOString()
+          })
+          .eq('candidate_id', candidateId);
+  
+        if (updateError) throw updateError;
+      }
+  
       // Bloquer les votes pendant 1 minute
       setCanVote(false);
       setTimeLeft(60);
@@ -171,12 +185,14 @@ export default function VotingApp() {
         localStorage.setItem('userVoteCount', newCount.toString());
         return newCount;
       });
-
+  
     } catch (error) {
-      console.error('Erreur vote:', error);
+      console.error('Erreur vote détaillée:', error);
+      if (error instanceof Error) {
+        console.error('Message d\'erreur:', error.message);
+      }
     }
-  }, [canVote]);
-
+  }, [canVote, candidates]);
   const getPercentage = useCallback((votes: number): number => {
     const totalVotes = candidates.reduce((sum, candidate) => sum + candidate.votes, 0);
     if (totalVotes === 0) return 0;
