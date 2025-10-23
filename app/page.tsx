@@ -9,7 +9,7 @@ interface Candidate {
   name: string;
   votes: number;
   color: string;
-  image: string; // Maintenant c'est le chemin vers l'image
+  image: string;
   party: string;
 }
 
@@ -31,6 +31,12 @@ const DEFAULT_CANDIDATES: Candidate[] = [
   { id: 15, name: "Linda la machette", votes: 0, color: "bg-emerald-500", image: "/linda.jpeg", party: "Linda lamachette" }
 ];
 
+// ⚡ CONFIGURATION FACILE - MODIFIE ICI POUR CHANGER LA DATE DE FIN
+const VOTE_END_DATE = new Date();
+VOTE_END_DATE.setDate(VOTE_END_DATE.getDate() + 3); // 3 jours à partir de maintenant
+// Pour modifier : change le "3" par le nombre de jours que tu veux
+// Exemple : +7 pour 7 jours, +1 pour 1 jour, etc.
+
 export default function VotingApp() {
   const [candidates, setCandidates] = useState<Candidate[]>(DEFAULT_CANDIDATES);
   const [canVote, setCanVote] = useState(true);
@@ -38,9 +44,49 @@ export default function VotingApp() {
   const [isLoading, setIsLoading] = useState(true);
   const [userVoteCount, setUserVoteCount] = useState(0);
   const [imageErrors, setImageErrors] = useState<Set<number>>(new Set());
+  const [timeLeftUntilEnd, setTimeLeftUntilEnd] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+  const [votingEnded, setVotingEnded] = useState(false);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const lastVoteTimeRef = useRef<number>(0);
+  const endDateTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Calculer le temps restant jusqu'à la fin des votes
+  const calculateTimeLeft = useCallback(() => {
+    const now = new Date().getTime();
+    const difference = VOTE_END_DATE.getTime() - now;
+
+    if (difference <= 0) {
+      setVotingEnded(true);
+      return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+    }
+
+    return {
+      days: Math.floor(difference / (1000 * 60 * 60 * 24)),
+      hours: Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
+      minutes: Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60)),
+      seconds: Math.floor((difference % (1000 * 60)) / 1000)
+    };
+  }, []);
+
+  // Mettre à jour le décompte de fin des votes
+  useEffect(() => {
+    const updateCountdown = () => {
+      setTimeLeftUntilEnd(calculateTimeLeft());
+    };
+
+    // Mettre à jour immédiatement
+    updateCountdown();
+
+    // Mettre à jour toutes les secondes
+    endDateTimerRef.current = setInterval(updateCountdown, 1000);
+
+    return () => {
+      if (endDateTimerRef.current) {
+        clearInterval(endDateTimerRef.current);
+      }
+    };
+  }, [calculateTimeLeft]);
 
   // Charger les votes depuis Supabase
   const loadVotes = useCallback(async () => {
@@ -140,7 +186,7 @@ export default function VotingApp() {
   }, []);
 
   const voteForCandidate = useCallback(async (candidateId: number) => {
-    if (!canVote) return;
+    if (!canVote || votingEnded) return;
   
     const now = Date.now();
     
@@ -192,7 +238,8 @@ export default function VotingApp() {
         console.error('Message d\'erreur:', error.message);
       }
     }
-  }, [canVote, candidates]);
+  }, [canVote, candidates, votingEnded]);
+
   const getPercentage = useCallback((votes: number): number => {
     const totalVotes = candidates.reduce((sum, candidate) => sum + candidate.votes, 0);
     if (totalVotes === 0) return 0;
@@ -203,6 +250,17 @@ export default function VotingApp() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  }, []);
+
+  const formatDate = useCallback((date: Date): string => {
+    return date.toLocaleDateString('fr-FR', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   }, []);
 
   const sortedCandidates = [...candidates].sort((a, b) => b.votes - a.votes);
@@ -223,13 +281,64 @@ export default function VotingApp() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-700 py-8">
       <div className="container mx-auto px-4">
-        {/* Header */}
+        {/* Header avec décompte */}
         <div className="text-center mb-12">
           <h1 className="text-5xl font-bold text-white mb-4 drop-shadow-lg">
             ⚔️ Élections du Président(e) des ULTRA 2025 ⚔️
           </h1>
+          
+          {/* Bannière de décompte */}
+          <div className={`mb-6 p-4 rounded-2xl border-2 ${
+            votingEnded 
+              ? 'bg-red-500/20 border-red-400' 
+              : 'bg-yellow-500/20 border-yellow-400'
+          }`}>
+            {votingEnded ? (
+              <div className="text-center">
+                <h2 className="text-2xl font-bold text-white mb-2">🗳️ Les votes sont terminés !</h2>
+                <p className="text-white/80">Les résultats finaux sont disponibles ci-dessous</p>
+              </div>
+            ) : (
+              <div className="text-center">
+                <h2 className="text-2xl font-bold text-white mb-2">⏰ Les votes se terminent dans :</h2>
+                <div className="flex justify-center items-center space-x-4 text-white">
+                  <div className="text-center">
+                    <div className="text-3xl font-bold bg-white/20 px-3 py-2 rounded-lg">
+                      {timeLeftUntilEnd.days}
+                    </div>
+                    <div className="text-sm mt-1">Jours</div>
+                  </div>
+                  <div className="text-2xl">:</div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold bg-white/20 px-3 py-2 rounded-lg">
+                      {timeLeftUntilEnd.hours.toString().padStart(2, '0')}
+                    </div>
+                    <div className="text-sm mt-1">Heures</div>
+                  </div>
+                  <div className="text-2xl">:</div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold bg-white/20 px-3 py-2 rounded-lg">
+                      {timeLeftUntilEnd.minutes.toString().padStart(2, '0')}
+                    </div>
+                    <div className="text-sm mt-1">Minutes</div>
+                  </div>
+                  <div className="text-2xl">:</div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold bg-white/20 px-3 py-2 rounded-lg">
+                      {timeLeftUntilEnd.seconds.toString().padStart(2, '0')}
+                    </div>
+                    <div className="text-sm mt-1">Secondes</div>
+                  </div>
+                </div>
+                <p className="text-white/60 mt-2 text-sm">
+                  Fin des votes le : <strong>{formatDate(VOTE_END_DATE)}</strong>
+                </p>
+              </div>
+            )}
+          </div>
+
           <p className="text-xl text-white/80 mb-6">
-            Votez pour votre candidat préféré - 1 vote par minute
+            {votingEnded ? 'Résultats finaux de l\'élection' : 'Votez pour votre candidat préféré - 1 vote par minute'}
           </p>
           
           {/* Stats Header */}
@@ -244,14 +353,26 @@ export default function VotingApp() {
             </div>
             <div className="bg-white/20 backdrop-blur-sm rounded-xl p-4">
               <p className="text-white/80 text-sm">Statut</p>
-              <p className={`text-lg font-bold ${canVote ? 'text-green-300' : 'text-yellow-300'}`}>
-                {canVote ? '✅ Prêt à voter' : '⏳ En attente'}
+              <p className={`text-lg font-bold ${
+                votingEnded 
+                  ? 'text-red-300' 
+                  : canVote 
+                    ? 'text-green-300' 
+                    : 'text-yellow-300'
+              }`}>
+                {votingEnded ? '🔒 Terminé' : canVote ? '✅ Prêt à voter' : '⏳ En attente'}
               </p>
             </div>
             <div className="bg-white/20 backdrop-blur-sm rounded-xl p-4">
               <p className="text-white/80 text-sm">Prochain vote</p>
-              <p className={`text-2xl font-bold ${timeLeft > 0 ? 'text-yellow-300' : 'text-green-300'}`}>
-                {timeLeft > 0 ? formatTime(timeLeft) : 'Maintenant!'}
+              <p className={`text-2xl font-bold ${
+                votingEnded 
+                  ? 'text-red-300' 
+                  : timeLeft > 0 
+                    ? 'text-yellow-300' 
+                    : 'text-green-300'
+              }`}>
+                {votingEnded ? 'Terminé' : timeLeft > 0 ? formatTime(timeLeft) : 'Maintenant!'}
               </p>
             </div>
           </div>
@@ -276,7 +397,7 @@ export default function VotingApp() {
                       height={96}
                       className="rounded-full object-cover w-24 h-24 border-2 border-gray-200"
                       onError={() => handleImageError(candidate.id)}
-                      priority={candidate.id <= 5} // Charge les premières images en priorité
+                      priority={candidate.id <= 5}
                     />
                   )}
                 </div>
@@ -299,14 +420,16 @@ export default function VotingApp() {
 
                 <button
                   onClick={() => voteForCandidate(candidate.id)}
-                  disabled={!canVote}
+                  disabled={!canVote || votingEnded}
                   className={`w-full py-3 px-4 rounded-lg font-bold text-white transition-all duration-300 ${
-                    canVote 
-                      ? `${candidate.color} hover:opacity-90 transform hover:scale-105 shadow-lg` 
-                      : 'bg-gray-400 cursor-not-allowed opacity-50'
+                    votingEnded
+                      ? 'bg-gray-400 cursor-not-allowed opacity-50'
+                      : canVote 
+                        ? `${candidate.color} hover:opacity-90 transform hover:scale-105 shadow-lg` 
+                        : 'bg-gray-400 cursor-not-allowed opacity-50'
                   }`}
                 >
-                  {canVote ? '🗳️ Voter Maintenant' : `⏳ Attendez ${formatTime(timeLeft)}`}
+                  {votingEnded ? '🗳️ Votes terminés' : canVote ? '🗳️ Voter Maintenant' : `⏳ Attendez ${formatTime(timeLeft)}`}
                 </button>
               </div>
             </div>
@@ -394,11 +517,13 @@ export default function VotingApp() {
 
         {/* Instructions */}
         <div className="text-center mt-8 text-white/60">
-          <p>💡 Les résultats se mettent à jour en temps réel pour tous les utilisateurs !</p>
-          <p className="text-sm mt-1">Un vote par minute maximum par personne</p>
+          <p>💡 {votingEnded ? 'Résultats finaux de l\'élection' : 'Les résultats se mettent à jour en temps réel pour tous les utilisateurs !'}</p>
+          <p className="text-sm mt-1">
+            {votingEnded ? 'Merci à tous les participants !' : 'Un vote par minute maximum par personne'}
+          </p>
         </div>
 
-        {/* Reset Button (Admin) */}
+        {/* Crédits de développement */}
         <div className="text-center mt-6">
           <p className="text-white/40 text-sm">
             Développé par <strong>N&lsquo;dja Asaph</strong> 📞 0140045652 / 07 10 14 59 75
