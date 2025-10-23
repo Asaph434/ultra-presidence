@@ -31,12 +31,6 @@ const DEFAULT_CANDIDATES: Candidate[] = [
   { id: 15, name: "Linda la machette", votes: 0, color: "bg-emerald-500", image: "/linda.jpeg", party: "Linda lamachette" }
 ];
 
-// ⚡ CONFIGURATION FACILE - MODIFIE ICI POUR CHANGER LA DATE DE FIN
-const VOTE_END_DATE = new Date();
-VOTE_END_DATE.setDate(VOTE_END_DATE.getDate() + 3); // 3 jours à partir de maintenant
-// Pour modifier : change le "3" par le nombre de jours que tu veux
-// Exemple : +7 pour 7 jours, +1 pour 1 jour, etc.
-
 export default function VotingApp() {
   const [candidates, setCandidates] = useState<Candidate[]>(DEFAULT_CANDIDATES);
   const [canVote, setCanVote] = useState(true);
@@ -46,15 +40,75 @@ export default function VotingApp() {
   const [imageErrors, setImageErrors] = useState<Set<number>>(new Set());
   const [timeLeftUntilEnd, setTimeLeftUntilEnd] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [votingEnded, setVotingEnded] = useState(false);
+  const [voteEndDate, setVoteEndDate] = useState<Date | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const lastVoteTimeRef = useRef<number>(0);
   const endDateTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Charger la date de fin depuis Supabase
+  const loadVoteEndDate = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'vote_end_date')
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        const endDate = new Date(data.value);
+        setVoteEndDate(endDate);
+        
+        // Vérifier si c'est un admin (simple vérification côté client)
+        // Tu peux améliorer ça avec une vraie authentification si besoin
+        const urlParams = new URLSearchParams(window.location.search);
+        setIsAdmin(urlParams.get('admin') === 'true');
+      } else {
+        // Date par défaut si pas encore définie
+        const defaultEndDate = new Date();
+        defaultEndDate.setDate(defaultEndDate.getDate() + 3);
+        setVoteEndDate(defaultEndDate);
+      }
+    } catch (error) {
+      console.error('Erreur chargement date de fin:', error);
+      // Date par défaut en cas d'erreur
+      const defaultEndDate = new Date();
+      defaultEndDate.setDate(defaultEndDate.getDate() + 3);
+      setVoteEndDate(defaultEndDate);
+    }
+  }, []);
+
+  // Mettre à jour la date de fin dans Supabase
+  const updateVoteEndDate = useCallback(async (newEndDate: Date) => {
+    try {
+      const { error } = await supabase
+        .from('app_settings')
+        .upsert({ 
+          key: 'vote_end_date',
+          value: newEndDate.toISOString(),
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'key'
+        });
+
+      if (error) throw error;
+      
+      setVoteEndDate(newEndDate);
+      setVotingEnded(false);
+    } catch (error) {
+      console.error('Erreur mise à jour date de fin:', error);
+    }
+  }, []);
+
   // Calculer le temps restant jusqu'à la fin des votes
   const calculateTimeLeft = useCallback(() => {
+    if (!voteEndDate) return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+
     const now = new Date().getTime();
-    const difference = VOTE_END_DATE.getTime() - now;
+    const difference = voteEndDate.getTime() - now;
 
     if (difference <= 0) {
       setVotingEnded(true);
@@ -67,10 +121,12 @@ export default function VotingApp() {
       minutes: Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60)),
       seconds: Math.floor((difference % (1000 * 60)) / 1000)
     };
-  }, []);
+  }, [voteEndDate]);
 
   // Mettre à jour le décompte de fin des votes
   useEffect(() => {
+    if (!voteEndDate) return;
+
     const updateCountdown = () => {
       setTimeLeftUntilEnd(calculateTimeLeft());
     };
@@ -86,7 +142,7 @@ export default function VotingApp() {
         clearInterval(endDateTimerRef.current);
       }
     };
-  }, [calculateTimeLeft]);
+  }, [calculateTimeLeft, voteEndDate]);
 
   // Charger les votes depuis Supabase
   const loadVotes = useCallback(async () => {
@@ -109,16 +165,20 @@ export default function VotingApp() {
       }
     } catch (error) {
       console.error('Erreur chargement votes:', error);
-    } finally {
-      setIsLoading(false);
     }
   }, []);
 
-  // Écouter les changements en temps réel
+  // Écouter les changements en temps réel (votes ET date de fin)
   useEffect(() => {
-    loadVotes();
+    const loadInitialData = async () => {
+      await Promise.all([loadVotes(), loadVoteEndDate()]);
+      setIsLoading(false);
+    };
 
-    const subscription = supabase
+    loadInitialData();
+
+    // S'abonner aux changements des votes
+    const votesSubscription = supabase
       .channel('votes-changes')
       .on('postgres_changes', 
         { 
@@ -132,10 +192,26 @@ export default function VotingApp() {
       )
       .subscribe();
 
+    // S'abonner aux changements de la date de fin
+    const settingsSubscription = supabase
+      .channel('settings-changes')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'app_settings' 
+        }, 
+        () => {
+          loadVoteEndDate();
+        }
+      )
+      .subscribe();
+
     return () => {
-      subscription.unsubscribe();
+      votesSubscription.unsubscribe();
+      settingsSubscription.unsubscribe();
     };
-  }, [loadVotes]);
+  }, [loadVotes, loadVoteEndDate]);
 
   // Timer pour le délai de vote
   useEffect(() => {
@@ -263,10 +339,27 @@ export default function VotingApp() {
     });
   }, []);
 
+  // Fonctions pour modifier la date de fin (admin seulement)
+  const extendVotingPeriod = useCallback(async (days: number) => {
+    if (!voteEndDate || !isAdmin) return;
+    
+    const newEndDate = new Date(voteEndDate);
+    newEndDate.setDate(newEndDate.getDate() + days);
+    await updateVoteEndDate(newEndDate);
+  }, [voteEndDate, isAdmin, updateVoteEndDate]);
+
+  const resetVotingPeriod = useCallback(async (days: number = 3) => {
+    if (!isAdmin) return;
+    
+    const newEndDate = new Date();
+    newEndDate.setDate(newEndDate.getDate() + days);
+    await updateVoteEndDate(newEndDate);
+  }, [isAdmin, updateVoteEndDate]);
+
   const sortedCandidates = [...candidates].sort((a, b) => b.votes - a.votes);
   const totalVotes = candidates.reduce((sum, candidate) => sum + candidate.votes, 0);
 
-  if (isLoading) {
+  if (isLoading || !voteEndDate) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-700 flex items-center justify-center">
         <div className="text-center text-white">
@@ -297,6 +390,14 @@ export default function VotingApp() {
               <div className="text-center">
                 <h2 className="text-2xl font-bold text-white mb-2">🗳️ Les votes sont terminés !</h2>
                 <p className="text-white/80">Les résultats finaux sont disponibles ci-dessous</p>
+                {isAdmin && (
+                  <button
+                    onClick={() => resetVotingPeriod(3)}
+                    className="mt-3 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-lg font-bold transition-all duration-300"
+                  >
+                    🔄 Redémarrer les votes (3 jours)
+                  </button>
+                )}
               </div>
             ) : (
               <div className="text-center">
@@ -331,8 +432,30 @@ export default function VotingApp() {
                   </div>
                 </div>
                 <p className="text-white/60 mt-2 text-sm">
-                  Fin des votes le : <strong>{formatDate(VOTE_END_DATE)}</strong>
+                  Fin des votes le : <strong>{formatDate(voteEndDate)}</strong>
                 </p>
+                {isAdmin && (
+                  <div className="mt-3 space-x-2">
+                    <button
+                      onClick={() => extendVotingPeriod(1)}
+                      className="bg-blue-500 hover:bg-blue-600 text-white py-1 px-3 rounded text-sm transition-all duration-300"
+                    >
+                      +1 Jour
+                    </button>
+                    <button
+                      onClick={() => extendVotingPeriod(7)}
+                      className="bg-purple-500 hover:bg-purple-600 text-white py-1 px-3 rounded text-sm transition-all duration-300"
+                    >
+                      +1 Semaine
+                    </button>
+                    <button
+                      onClick={() => resetVotingPeriod(3)}
+                      className="bg-green-500 hover:bg-green-600 text-white py-1 px-3 rounded text-sm transition-all duration-300"
+                    >
+                      Redémarrer
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -521,6 +644,11 @@ export default function VotingApp() {
           <p className="text-sm mt-1">
             {votingEnded ? 'Merci à tous les participants !' : 'Un vote par minute maximum par personne'}
           </p>
+          {isAdmin && (
+            <p className="text-yellow-300 text-sm mt-2">
+              🔧 Mode administrateur activé - Vous pouvez modifier la date de fin
+            </p>
+          )}
         </div>
 
         {/* Crédits de développement */}
@@ -528,6 +656,11 @@ export default function VotingApp() {
           <p className="text-white/40 text-sm">
             Développé par <strong>N&lsquo;dja Asaph</strong> 📞 0140045652 / 07 10 14 59 75
           </p>
+          {isAdmin && (
+            <p className="text-white/60 text-xs mt-1">
+              Lien admin : ajoutez <code>?admin=true</code> à l&lsquo;URL
+            </p>
+          )}
         </div>
       </div>
     </div>
