@@ -377,7 +377,7 @@ export default function VotingApp() {
         {/* Header avec décompte */}
         <div className="text-center mb-12">
           <h1 className="text-5xl font-bold text-white mb-4 drop-shadow-lg">
-            ⚔️ Élections du Président(e) des ULTRA 2025 ⚔️
+            ⚔️ Élections du Président(e) des ULTRAS 2025 ⚔️
           </h1>
           
           {/* Bannière de décompte */}
